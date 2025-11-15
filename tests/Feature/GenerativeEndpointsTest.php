@@ -39,9 +39,13 @@ it('generates instagram text', function () {
 
 it('generates an image', function () {
     config(['generative.google_api_key' => 'test-key', 'generative.google_model' => 'gemini-image-1']);
+    // Simulate inline base64 image data returned like the generateContent response
+    $imgData = base64_encode("PNGDATA");
     Http::fake([
         'generativelanguage.googleapis.com/*' => Http::response([
-            'image_url' => 'https://cdn.example.com/image.png'
+            'candidates' => [
+                ['content' => ['parts' => [['text' => 'image placeholder', 'inlineData' => ['data' => $imgData]]]]]
+            ]
         ], 200),
     ]);
 
@@ -52,7 +56,11 @@ it('generates an image', function () {
 
     $response->assertStatus(200);
     $response->assertJsonFragment(['success' => true]);
-    $response->assertJsonPath('payload.image_url', 'https://cdn.example.com/image.png');
+    // The service should save inline image data and return saved_image metadata
+    $payload = $response->json('payload');
+    expect($payload['saved_image'])->not->toBeNull();
+    $imagePath = storage_path('app/' . $payload['saved_image']['path']);
+    $this->assertFileExists($imagePath);
 });
 
 it('generates audio', function () {

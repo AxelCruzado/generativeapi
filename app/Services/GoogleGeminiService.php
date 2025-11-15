@@ -91,7 +91,11 @@ class GoogleGeminiService
     public function generateImage(string $userPrompt, array $options = []): array
     {
         $wrapped = $this->wrapPromptForImage($userPrompt, $options);
-        $payload = array_merge(["prompt" => $wrapped], $options);
+        $payload = [
+            'contents' => [[
+                'parts' => [[ 'text' => $wrapped ]]
+            ]]
+        ];
         $model = $options['model'] ?? $this->model;
         if (empty($model)) {
             return [
@@ -100,9 +104,23 @@ class GoogleGeminiService
                 'body' => 'Missing GEMINI_MODEL configuration. Set GEMINI_MODEL in .env or pass `model` in request body.'
             ];
         }
-        $uri = '/models/' . $model . ':generateImage';
+    // Use generic generateContent endpoint for image generation — some image models
+    // return inline base64 image data under content.parts[0].inlineData.data
+    $uri = '/models/' . $model . ':generateContent';
         $response = $this->post($uri, $payload);
-        return $this->formatResponse($response);
+        $formatted = $this->formatResponse($response);
+
+        // If the API returned inline image data, save it and return metadata
+        if ($formatted['success'] && isset($formatted['payload']['candidates'][0]['content']['parts'][0]['inlineData']['data'])) {
+            $base64 = $formatted['payload']['candidates'][0]['content']['parts'][0]['inlineData']['data'];
+            $saved = $this->saveGeneratedImage($base64, $userPrompt, $model);
+            if ($saved['success']) {
+                $formatted['payload']['saved_image'] = $saved['image'];
+            }
+        }
+
+        // Otherwise, leave as-is (might contain image_url)
+        return $formatted;
     }
 
     public function generateAudio(string $userPrompt, array $options = []): array
@@ -284,6 +302,76 @@ class GoogleGeminiService
         $this->saveAudioMetadata($meta);
 
         return ['success' => true, 'status' => 201, 'audio' => $entry];
+    }
+
+    // Save generated image bytes and metadata, keep up to 50 files
+    public function saveGeneratedImage(string $base64Data, string $originalPrompt = '', string $model = ''): array
+    {
+        $bytes = base64_decode($base64Data);
+        if ($bytes === false) {
+            return ['success' => false, 'status' => 400, 'body' => 'Invalid base64 image data'];
+        }
+
+        $dir = 'images';
+        if (! Storage::exists($dir)) {
+            Storage::makeDirectory($dir);
+        }
+
+        $id = Str::random(12);
+        $filename = $id . '.png';
+        $path = $dir . '/' . $filename;
+
+        $filePath = storage_path('app/' . $path);
+        file_put_contents($filePath, $bytes);
+        $size = filesize($filePath);
+
+        $meta = $this->loadImageMetadata();
+        $entry = [
+            'id' => $id,
+            'filename' => $filename,
+            'path' => $path,
+            'original_prompt' => $originalPrompt,
+            'model' => $model,
+            'size' => $size,
+            'created_at' => now()->toDateTimeString(),
+        ];
+
+        $meta[] = $entry;
+        // sort by created_at ascending
+        usort($meta, function ($a, $b) {
+            return strtotime($a['created_at']) <=> strtotime($b['created_at']);
+        });
+
+        // enforce limit 50
+        while (count($meta) > 50) {
+            $oldest = array_shift($meta);
+            if (!empty($oldest['path']) && Storage::exists($oldest['path'])) {
+                Storage::delete($oldest['path']);
+            }
+        }
+
+        $this->saveImageMetadata($meta);
+
+        return ['success' => true, 'status' => 201, 'image' => $entry];
+    }
+
+    protected function loadImageMetadata(): array
+    {
+        $path = storage_path('app/images/metadata.json');
+        if (!file_exists($path)) return [];
+        $json = file_get_contents($path);
+        $data = json_decode($json, true);
+        return is_array($data) ? $data : [];
+    }
+
+    protected function saveImageMetadata(array $meta): void
+    {
+        $dir = storage_path('app/images');
+        if (! is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
+        $path = $dir . '/metadata.json';
+        file_put_contents($path, json_encode($meta, JSON_PRETTY_PRINT));
     }
 
     public function listSavedAudios(): array

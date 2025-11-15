@@ -8,11 +8,11 @@ Route::prefix('v1')->group(function () {
         Route::post('facebook', [GenerativeController::class, 'generateFacebook']);
         Route::post('instagram', [GenerativeController::class, 'generateInstagram']);
         Route::post('podcast', [GenerativeController::class, 'generatePodcast']);
-        Route::post('image', [GenerativeController::class, 'generateImage']);
+        Route::post('image', [GenerativeController::class, 'generateImage']); # Falta validar con una cuenta Tier 1
         Route::post('audio', [GenerativeController::class, 'generateAudio']);
         Route::get('audio/list', [GenerativeController::class, 'listAudios']);
         Route::post('audio/send', [GenerativeController::class, 'sendAudio']);
         Route::get('audio/{id}', [GenerativeController::class, 'downloadAudio']);
-        Route::post('video', [GenerativeController::class, 'generateVideo']);
+        Route::post('video', [GenerativeController::class, 'generateVideo']); # Por corregir con la api oficial
     });
 });
