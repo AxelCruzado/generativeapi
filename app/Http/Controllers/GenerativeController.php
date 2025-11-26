@@ -6,73 +6,69 @@ use App\Http\Requests\GenerateTextRequest;
 use App\Http\Requests\GenerateMediaRequest;
 use App\Services\GoogleGeminiService;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class GenerativeController extends Controller
 {
-    protected GoogleGeminiService $gemini;
+    public function __construct(
+        protected GoogleGeminiService $gemini
+    ) {}
 
-    public function __construct(GoogleGeminiService $gemini)
-    {
-        $this->gemini = $gemini;
-    }
-
+    // ============================================
+    // TEXT GENERATION
+    // ============================================
+    
     public function generateFacebook(GenerateTextRequest $request): JsonResponse
     {
-        $options = $request->only(['tone', 'length', 'model']);
-        // Accept either a raw prompt or content array (already shaped like Gemini's contents check)
-        if ($request->has('contents')) {
-            $contents = $request->input('contents');
-            $options['contents'] = $contents;
-            $result = $this->gemini->generateTextFromContents($options['contents'], 'facebook', $options);
-        } else {
-            $prompt = $request->input('prompt');
-            $result = $this->gemini->generateText($prompt, 'facebook', $options);
-        }
-        return response()->json($result, $result['status'] ?? 200);
+        return $this->generateTextForChannel($request, 'facebook');
     }
 
     public function generateInstagram(GenerateTextRequest $request): JsonResponse
     {
-        $options = $request->only(['tone', 'length', 'model']);
-        if ($request->has('contents')) {
-            $contents = $request->input('contents');
-            $options['contents'] = $contents;
-            $result = $this->gemini->generateTextFromContents($options['contents'], 'instagram', $options);
-        } else {
-            $prompt = $request->input('prompt');
-            $result = $this->gemini->generateText($prompt, 'instagram', $options);
-        }
-        return response()->json($result, $result['status'] ?? 200);
+        return $this->generateTextForChannel($request, 'instagram');
     }
 
     public function generatePodcast(GenerateTextRequest $request): JsonResponse
     {
-        $options = $request->only(['tone', 'length', 'model']);
-        if ($request->has('contents')) {
-            $contents = $request->input('contents');
-            $options['contents'] = $contents;
-            $result = $this->gemini->generateTextFromContents($options['contents'], 'podcast', $options);
-        } else {
-            $prompt = $request->input('prompt');
-            $result = $this->gemini->generateText($prompt, 'podcast', $options);
-        }
-        return response()->json($result, $result['status'] ?? 200);
+        return $this->generateTextForChannel($request, 'podcast');
     }
 
+    // ============================================
+    // IMAGE GENERATION
+    // ============================================
+    
     public function generateImage(GenerateMediaRequest $request): JsonResponse
     {
-        $prompt = $request->input('prompt');
-        $options = $request->only(['format', 'size', 'model']);
-        $result = $this->gemini->generateImage($prompt, $options);
+        $result = $this->gemini->generateImage(
+            $request->input('prompt'),
+            $request->only(['format', 'size', 'model', 'aspectRatio', 'numberOfImages'])
+        );
+        
         return response()->json($result, $result['status'] ?? 200);
     }
 
+    public function listImages(): JsonResponse
+    {
+        $result = $this->gemini->listSavedImages();
+        return response()->json($result, $result['status'] ?? 200);
+    }
+
+    public function downloadImage(string $id): JsonResponse|BinaryFileResponse
+    {
+        return $this->downloadMedia($id, 'image');
+    }
+
+    // ============================================
+    // AUDIO GENERATION
+    // ============================================
+    
     public function generateAudio(GenerateMediaRequest $request): JsonResponse
     {
-        $prompt = $request->input('prompt');
-        $options = $request->only(['format', 'size', 'model']);
-        $result = $this->gemini->generateAudio($prompt, $options);
+        $result = $this->gemini->generateAudio(
+            $request->input('prompt'),
+            $request->only(['format', 'size', 'model', 'voice'])
+        );
+        
         return response()->json($result, $result['status'] ?? 200);
     }
 
@@ -82,95 +78,82 @@ class GenerativeController extends Controller
         return response()->json($result, $result['status'] ?? 200);
     }
 
-    public function sendAudio(Request $request)
+    public function downloadAudio(string $id): JsonResponse|BinaryFileResponse
     {
-        $id = $request->input('id');
-        if (! $id) {
-            return response()->json(['success' => false, 'status' => 400, 'body' => 'Missing audio id'], 400);
-        }
-
-        $audio = $this->gemini->getSavedAudioById($id);
-        if (! $audio) {
-            return response()->json(['success' => false, 'status' => 404, 'body' => 'Audio not found'], 404);
-        }
-
-        $path = storage_path('app/' . $audio['path']);
-        if (! file_exists($path)) {
-            return response()->json(['success' => false, 'status' => 404, 'body' => 'Audio file missing'], 404);
-        }
-
-        return response()->download($path, $audio['filename']);
+        return $this->downloadMedia($id, 'audio');
     }
 
-    public function downloadAudio($id)
-    {
-        if (! $id) {
-            return response()->json(['success' => false, 'status' => 400, 'body' => 'Missing audio id'], 400);
-        }
-
-        $audio = $this->gemini->getSavedAudioById($id);
-        if (! $audio) {
-            return response()->json(['success' => false, 'status' => 404, 'body' => 'Audio not found'], 404);
-        }
-
-        $path = storage_path('app/' . $audio['path']);
-        if (! file_exists($path)) {
-            return response()->json(['success' => false, 'status' => 404, 'body' => 'Audio file missing'], 404);
-        }
-
-        return response()->download($path, $audio['filename']);
-    }
-
-    public function listImages(): JsonResponse
-    {
-        $result = $this->gemini->listSavedImages();
-        return response()->json($result, $result['status'] ?? 200);
-    }
-
-    public function sendImage(Request $request)
-    {
-        $id = $request->input('id');
-        if (! $id) {
-            return response()->json(['success' => false, 'status' => 400, 'body' => 'Missing image id'], 400);
-        }
-
-        $image = $this->gemini->getSavedImageById($id);
-        if (! $image) {
-            return response()->json(['success' => false, 'status' => 404, 'body' => 'Image not found'], 404);
-        }
-
-        $path = storage_path('app/' . $image['path']);
-        if (! file_exists($path)) {
-            return response()->json(['success' => false, 'status' => 404, 'body' => 'Image file missing'], 404);
-        }
-
-        return response()->download($path, $image['filename']);
-    }
-
-    public function downloadImage($id)
-    {
-        if (! $id) {
-            return response()->json(['success' => false, 'status' => 400, 'body' => 'Missing image id'], 400);
-        }
-
-        $image = $this->gemini->getSavedImageById($id);
-        if (! $image) {
-            return response()->json(['success' => false, 'status' => 404, 'body' => 'Image not found'], 404);
-        }
-
-        $path = storage_path('app/' . $image['path']);
-        if (! file_exists($path)) {
-            return response()->json(['success' => false, 'status' => 404, 'body' => 'Image file missing'], 404);
-        }
-
-        return response()->download($path, $image['filename']);
-    }
-
+    // ============================================
+    // VIDEO GENERATION
+    // ============================================
+    
     public function generateVideo(GenerateMediaRequest $request): JsonResponse
     {
-        $prompt = $request->input('prompt');
-        $options = $request->only(['format', 'size', 'model']);
-        $result = $this->gemini->generateVideo($prompt, $options);
+        $result = $this->gemini->generateVideo(
+            $request->input('prompt'),
+            $request->only(['format', 'size', 'model'])
+        );
+        
         return response()->json($result, $result['status'] ?? 200);
+    }
+
+    public function listVideos(): JsonResponse
+    {
+        $result = $this->gemini->listSavedVideos();
+        return response()->json($result, $result['status'] ?? 200);
+    }
+
+    public function downloadVideo(string $id): JsonResponse|BinaryFileResponse
+    {
+        return $this->downloadMedia($id, 'video');
+    }
+
+    // ============================================
+    // PRIVATE HELPERS
+    // ============================================
+    
+    private function generateTextForChannel(GenerateTextRequest $request, string $channel): JsonResponse
+    {
+        $options = $request->only(['tone', 'length', 'model']);
+        
+        $result = $request->has('contents')
+            ? $this->gemini->generateTextFromContents($request->input('contents'), $channel, $options)
+            : $this->gemini->generateText($request->input('prompt'), $channel, $options);
+        
+        return response()->json($result, $result['status'] ?? 200);
+    }
+
+    private function downloadMedia(string $id, string $type): JsonResponse|BinaryFileResponse
+    {
+        if (empty($id)) {
+            return response()->json([
+                'success' => false,
+                'status' => 400,
+                'body' => "Missing {$type} id"
+            ], 400);
+        }
+
+        $getter = "getSaved" . ucfirst($type) . "ById";
+        $media = $this->gemini->{$getter}($id);
+
+        if (!$media) {
+            return response()->json([
+                'success' => false,
+                'status' => 404,
+                'body' => ucfirst($type) . ' not found'
+            ], 404);
+        }
+
+        $path = storage_path('app/' . $media['path']);
+        
+        if (!file_exists($path)) {
+            return response()->json([
+                'success' => false,
+                'status' => 404,
+                'body' => ucfirst($type) . ' file missing'
+            ], 404);
+        }
+
+        return response()->download($path, $media['filename']);
     }
 }
